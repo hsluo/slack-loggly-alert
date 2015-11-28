@@ -1,0 +1,17 @@
+application: <app name>
+version: 1
+runtime: go
+api_version: go1
+
+env_variables:
+  LOGGLY_USERNAME: ''
+  LOGGLY_PASSWORD: ''
+  LOGGLY_DOMAIN: ''
+  LOGGLY_SEARCH_QUERY: syslog.severity:"Error" OR syslog.severity:"Warning"
+
+handlers:
+- url: /.*
+  script: _go_app
+- url: /loggly/search
+  script: _go_app
+  login: admin
