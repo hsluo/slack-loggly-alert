@@ -29,15 +29,15 @@ type LogglyAlert struct {
 }
 
 var (
-	exRe = regexp.MustCompile(`\w+::\w+`)
+	rubyErrorRe = regexp.MustCompile(`\w+::\w+`)
 )
 
-func fmtHit(hit string) string {
+func FmtHit(hit string) string {
 	stackTrace := strings.Split(strings.TrimSpace(hit), "#012")
 	lines := make([]string, 0)
 	for i := range stackTrace {
 		if i == 0 {
-			line := exRe.ReplaceAllStringFunc(stackTrace[i], func(match string) string {
+			line := rubyErrorRe.ReplaceAllStringFunc(stackTrace[i], func(match string) string {
 				return "`" + match + "`"
 			})
 			lines = append(lines, line)
@@ -65,7 +65,7 @@ func NewAttachment(req *http.Request) (attachment slack.Attachment, err error) {
 	if strings.Contains(alert.RecentHits[0], "#012") {
 		fallback = strings.SplitN(alert.RecentHits[0], "#012", 2)[0]
 		for i, hit := range alert.RecentHits {
-			alert.RecentHits[i] = fmtHit(hit)
+			alert.RecentHits[i] = FmtHit(hit)
 		}
 	} else {
 		fallback = alert.RecentHits[0]
