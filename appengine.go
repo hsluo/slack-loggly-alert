@@ -113,7 +113,7 @@ func fmtEvents(events []Event) string {
 		} else {
 			text = e.Logmsg
 			if strings.Contains(e.Logmsg, "#012") {
-				text = fmtHit(e.Logmsg)
+				text = FmtHit(e.Logmsg)
 			}
 			loc, err := time.LoadLocation(os.Getenv("LOCATION"))
 			if err != nil {
