@@ -5,7 +5,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,7 +16,7 @@ import (
 	"github.com/hsluo/slack-bot"
 
 	"google.golang.org/appengine"
-	l "google.golang.org/appengine/log"
+	"google.golang.org/appengine/log"
 	"google.golang.org/appengine/urlfetch"
 )
 
@@ -30,6 +29,10 @@ type task struct {
 var (
 	outgoing chan task
 	bot      slack.Bot
+
+	logglyDomain   = os.Getenv("LOGGLY_DOMAIN")
+	logglyUsername = os.Getenv("LOGGLY_USERNAME")
+	logglyPassword = os.Getenv("LOGGLY_PASSWORD")
 )
 
 func logglyAlert(rw http.ResponseWriter, req *http.Request) {
@@ -37,13 +40,13 @@ func logglyAlert(rw http.ResponseWriter, req *http.Request) {
 
 	attachment, err := NewAttachment(req)
 	if err != nil {
-		l.Errorf(c, "%s", err)
+		log.Errorf(c, "%s", err)
 		return
 	}
 
 	bytes, err := json.Marshal([]slack.Attachment{attachment})
 	if err != nil {
-		l.Errorf(c, "%s", err)
+		log.Errorf(c, "%s", err)
 		return
 	}
 	data := url.Values{}
@@ -53,42 +56,13 @@ func logglyAlert(rw http.ResponseWriter, req *http.Request) {
 	outgoing <- task{context: c, method: "chat.postMessage", data: data}
 }
 
-var (
-	domain       string
-	logglyClient *LogglyClient
-)
-
 func logglySearch(rw http.ResponseWriter, req *http.Request) {
 	ctx := appengine.NewContext(req)
 
-	if logglyClient == nil {
-		logglyClient = &LogglyClient{
-			Domain:   os.Getenv("LOGGLY_DOMAIN"),
-			Username: os.Getenv("LOGGLY_USERNAME"),
-			Password: os.Getenv("LOGGLY_PASSWORD"),
-		}
-	}
-	logglyClient.Client = urlfetch.Client(ctx)
-
-	rsid, err := logglyClient.GetRsid(url.Values{
-		"q":     {os.Getenv("LOGGLY_SEARCH_QUERY")},
-		"from":  {"-10m"},
-		"order": {"asc"},
-	})
+	searchResult, err := search(ctx, `syslog.severity:"Error" OR syslog.severity:"Warning"`)
 	if err != nil {
-		http.Error(rw, err.Error(), 500)
-		return
-	}
-
-	searchResult, err := logglyClient.Search(rsid)
-	if err != nil {
-		http.Error(rw, err.Error(), 500)
-		return
-	}
-
-	l.Infof(ctx, "rsid=%v events=%v", rsid, searchResult.TotalEvents)
-
-	if searchResult.TotalEvents == 0 {
+		http.Error(rw, "error", 500)
+		log.Errorf(ctx, "failed to search, error: %v", err.Error())
 		return
 	}
 
@@ -101,6 +75,33 @@ func logglySearch(rw http.ResponseWriter, req *http.Request) {
 			"as_user": {"false"},
 		},
 	}
+}
+
+func search(ctx context.Context, query string) (*SearchResult, error) {
+	logglyClient = &LogglyClient{
+		Domain:   logglyDomain,
+		Username: logglyUsername,
+		Password: logglyPassword,
+		Client:   urlfetch.Client(ctx),
+	}
+
+	rsid, err := logglyClient.GetRsid(url.Values{
+		"q":     {query},
+		"from":  {"-10m"},
+		"order": {"asc"},
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	searchResult, err := logglyClient.Search(rsid)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Infof(ctx, "rsid=%v events=%v", rsid, searchResult.TotalEvents)
+
+	return searchResult, nil
 }
 
 func fmtEvents(events []Event) string {
@@ -131,17 +132,15 @@ func worker(outgoing <-chan task) {
 	for task := range outgoing {
 		_, err := bot.WithClient(urlfetch.Client(task.context)).PostForm(task.method, task.data)
 		if err != nil {
-			l.Errorf(task.context, "%s\n%v", err, task.data)
+			log.Errorf(task.context, "%s\n%v", err, task.data)
 		}
 	}
 }
 
 func init() {
-	log.Println("appengine init")
-
 	credential, err := slack.LoadCredentials("credentials.json")
 	if err != nil {
-		log.Fatal(err)
+		panic(err)
 	}
 	bot = credential.Bot
 
