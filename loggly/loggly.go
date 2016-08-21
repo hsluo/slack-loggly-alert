@@ -1,4 +1,4 @@
-package main
+package loggly
 
 import (
 	"encoding/json"
@@ -112,18 +112,64 @@ type SubEvent struct {
 	Host      string
 }
 
-type LogglyClient struct {
-	Username string
-	Password string
-	Domain   string
+type Client struct {
 	Client   *http.Client
+	domain   string
+	username string
+	password string
+	apiBase  string
+}
+
+func NewClient(domain, username, password string) *Client {
+	return &Client{
+		domain:   domain,
+		username: username,
+		password: password,
+		apiBase:  fmt.Sprintf("http://%s.loggly.com/apiv2/", domain),
+	}
+}
+
+func (c *Client) Get(endpoint string) *LogglyResponse {
+	req, _ := http.NewRequest("GET", c.apiBase+endpoint, nil)
+	req.SetBasicAuth(c.username, c.password)
+	resp, err := c.Client.Do(req)
+	if err != nil {
+		panic(err)
+	}
+	return &LogglyResponse{resp}
+}
+
+func (c *Client) GetRsid(params url.Values) (string, error) {
+	resp := make(map[string]interface{})
+	err := c.Get(fmt.Sprintf("search?%s", params.Encode())).decodeJson(&resp)
+	if err != nil {
+		return "", err
+	} else {
+		rsid := resp["rsid"].(map[string]interface{})["id"].(string)
+		return rsid, nil
+	}
+}
+
+func (c *Client) GetEvents(rsid string) (*SearchResult, error) {
+	searchResult := SearchResult{}
+	err := c.Get(fmt.Sprintf("events?rsid=%s", rsid)).decodeJson(&searchResult)
+	return &searchResult, err
+}
+
+func (c *Client) Search(params url.Values) (*SearchResult, error) {
+	rsid, err := c.GetRsid(params)
+	if err != nil {
+		return nil, err
+	}
+
+	return c.GetEvents(rsid)
 }
 
 type LogglyResponse struct {
 	*http.Response
 }
 
-func (r LogglyResponse) UnmarshallJson(v interface{}) error {
+func (r *LogglyResponse) decodeJson(v interface{}) error {
 	defer r.Body.Close()
 	dec := json.NewDecoder(r.Body)
 	for {
@@ -133,33 +179,4 @@ func (r LogglyResponse) UnmarshallJson(v interface{}) error {
 			return err
 		}
 	}
-}
-
-func (c *LogglyClient) Request(endpoint string) *LogglyResponse {
-	req, _ := http.NewRequest("GET", endpoint, nil)
-	req.SetBasicAuth(c.Username, c.Password)
-	resp, err := c.Client.Do(req)
-	if err != nil {
-		panic(err)
-	}
-	return &LogglyResponse{resp}
-}
-
-func (c *LogglyClient) GetRsid(params url.Values) (string, error) {
-	resp := make(map[string]interface{})
-	err := c.Request(fmt.Sprintf("http://%s.loggly.com/apiv2/search?%s",
-		c.Domain, params.Encode())).UnmarshallJson(&resp)
-	if err != nil {
-		return "", err
-	} else {
-		rsid := resp["rsid"].(map[string]interface{})["id"].(string)
-		return rsid, nil
-	}
-}
-
-func (c *LogglyClient) Search(rsid string) (*SearchResult, error) {
-	searchResult := SearchResult{}
-	err := c.Request(fmt.Sprintf("http://%s.loggly.com/apiv2/events?rsid=%s",
-		c.Domain, rsid)).UnmarshallJson(&searchResult)
-	return &searchResult, err
 }
